@@ -12,6 +12,8 @@ const SNAPSHOT_DIR = path.join(__dirname, 'vrt-snapshots');
 const WAIT_MS = Number(process.env.VRT_WAIT_MS ?? 2000);
 // 許容差分率（0.01 = 1%）: 必要に応じて調整
 const MAX_DIFF_RATIO = Number(process.env.VRT_MAX_DIFF_RATIO ?? 0.01);
+// 許容差分ピクセル数（0 = 1pxでも差分があれば失敗）
+const MAX_DIFF_PIXELS = Number(process.env.VRT_MAX_DIFF_PIXELS ?? 0);
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
   if (value == null) return undefined;
@@ -102,8 +104,8 @@ function comparePngs(
 
   const diffPng = new PNG({ width, height });
   const diffPixels = pixelmatch(padded(imgA), padded(imgB), diffPng.data, width, height, {
-    threshold: 0.1,
-    includeAA: false,
+    threshold: 0,
+    includeAA: true,
   });
 
   return {
@@ -141,6 +143,7 @@ for (const pagePair of pages) {
       // --- A vs B 直接比較 ---
       const { diffPixels, totalPixels, diffBuffer } = comparePngs(screenshotA, screenshotB);
       const diffRatio = diffPixels / totalPixels;
+      console.log(`[VRT: ${name}] diffPixels=${diffPixels}, totalPixels=${totalPixels}, diffRatio=${(diffRatio * 100).toFixed(4)}%`);
       fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}-diff.png`), diffBuffer);
 
       // レポートに3枚添付
@@ -148,11 +151,12 @@ for (const pagePair of pages) {
       await testInfo.attach(`B: ${urlB}`, { body: screenshotB, contentType: 'image/png' });
       await testInfo.attach(`DIFF (${(diffRatio * 100).toFixed(2)}%)`, { body: diffBuffer, contentType: 'image/png' });
 
-      // 差分率が閾値を超えたらテスト失敗
-      if (diffRatio > MAX_DIFF_RATIO) {
+      // 差分率または差分ピクセル数が閾値を超えたらテスト失敗
+      if (diffRatio > MAX_DIFF_RATIO || diffPixels > MAX_DIFF_PIXELS) {
         throw new Error(
-          `差分が許容値を超えています: ${(diffRatio * 100).toFixed(2)}% > ${(MAX_DIFF_RATIO * 100).toFixed(2)}%\n` +
-          `差分ピクセル数: ${diffPixels} / ${totalPixels}`,
+          `差分が許容値を超えています:\n` +
+          `- 比率: ${(diffRatio * 100).toFixed(4)}% (許容 ${(MAX_DIFF_RATIO * 100).toFixed(4)}%)\n` +
+          `- ピクセル: ${diffPixels} (許容 ${MAX_DIFF_PIXELS}) / 総ピクセル ${totalPixels}`,
         );
       }
 
