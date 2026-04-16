@@ -1,0 +1,6 @@
+# 比較元URL一覧（現行環境）
+# 1行1URL。# で始まる行と空行は無視されます。
+# urls-b.txt と行番号を対応させてください。
+
+http://localhost:3000/
+http://localhost:3000/about/

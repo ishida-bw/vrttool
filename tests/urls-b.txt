@@ -1,0 +1,10 @@
+# 比較先URL一覧（新環境）
+# 1行1URL。# で始まる行と空行は無視されます。
+# urls-a.txt と行番号を対応させてください。
+# 対応するページがない場合は「-」を記入するとそのページはスキップされます。
+# Basic認証はURLに含めず .env で管理してください
+# VRT_BASIC_AUTH_USERNAME=your_username
+# VRT_BASIC_AUTH_PASSWORD=your_password
+
+https://ceg.beeworks.jp/
+https://ceg.beeworks.jp/about/
