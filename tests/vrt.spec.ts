@@ -1,9 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
 import { test, type BrowserContextOptions, type Page } from '@playwright/test';
 import { pages } from './urls';
+
+const { PNG } = require('pngjs');
 
 // スクリーンショット保存先
 const SNAPSHOT_DIR = path.join(__dirname, 'vrt-snapshots');
@@ -12,9 +13,44 @@ const WAIT_MS = Number(process.env.VRT_WAIT_MS ?? 2000);
 // 許容差分率（0.01 = 1%）: 必要に応じて調整
 const MAX_DIFF_RATIO = Number(process.env.VRT_MAX_DIFF_RATIO ?? 0.01);
 
+function normalizeEnvValue(value: string | undefined): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  // .env 側で引用符付きでも認証値として使えるようにする
+  return trimmed.replace(/^['\"](.*)['\"]$/, '$1');
+}
+
+function pickFirstEnv(keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = normalizeEnvValue(process.env[key]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
 function getContextOptions(side: 'A' | 'B'): BrowserContextOptions {
-  const username = process.env[`VRT_BASIC_AUTH_USERNAME_${side}`] ?? process.env.VRT_BASIC_AUTH_USERNAME;
-  const password = process.env[`VRT_BASIC_AUTH_PASSWORD_${side}`] ?? process.env.VRT_BASIC_AUTH_PASSWORD;
+  const username = pickFirstEnv([
+    `VRT_BASIC_AUTH_USERNAME_${side}`,
+    `VRT_BASIC_AUTH_USER_${side}`,
+    `BASIC_AUTH_USERNAME_${side}`,
+    `BASIC_AUTH_USER_${side}`,
+    'VRT_BASIC_AUTH_USERNAME',
+    'VRT_BASIC_AUTH_USER',
+    'BASIC_AUTH_USERNAME',
+    'BASIC_AUTH_USER',
+  ]);
+
+  const password = pickFirstEnv([
+    `VRT_BASIC_AUTH_PASSWORD_${side}`,
+    `VRT_BASIC_AUTH_PASS_${side}`,
+    `BASIC_AUTH_PASSWORD_${side}`,
+    `BASIC_AUTH_PASS_${side}`,
+    'VRT_BASIC_AUTH_PASSWORD',
+    'VRT_BASIC_AUTH_PASS',
+    'BASIC_AUTH_PASSWORD',
+    'BASIC_AUTH_PASS',
+  ]);
 
   if ((username && !password) || (!username && password)) {
     throw new Error(`Basic認証の設定が不完全です: ${side}側はユーザー名とパスワードを両方設定してください。`);
@@ -55,7 +91,7 @@ function comparePngs(
   const height = Math.max(imgA.height, imgB.height);
 
   // キャンバスサイズを統一（足りない部分は透明で埋める）
-  const padded = (img: PNG): Buffer => {
+  const padded = (img: { width: number; height: number; data: Buffer }): Buffer => {
     if (img.width === width && img.height === height) return img.data;
     const buf = Buffer.alloc(width * height * 4, 0);
     for (let y = 0; y < img.height; y++) {
