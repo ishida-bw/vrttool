@@ -21,12 +21,44 @@ Playwright を使って、A 側 URL と B 側 URL のスクリーンショット
 | `VRT_MAX_DIFF_RATIO` | `0.01` | 許容する差分率です。`0.01 = 1%` を意味します。 |
 | `VRT_MAX_DIFF_PIXELS` | `0` | 許容する差分ピクセル数です。`0` の場合は 1px でも差分があれば失敗します。 |
 | `VRT_SAVE_RAW_SCREENSHOTS` | `true` | `true` の場合、A/B の生画像を `tests/vrt-snapshots` に保存します。 |
+| `VRT_MASK_SELECTORS` | 既定セレクター群 | スクリーンショット時にマスクする CSS セレクター一覧です。JSON 配列形式またはカンマ区切りで指定できます。 |
 | `VRT_BASIC_AUTH_USERNAME_A` | 空 | A 側 (`tests/urls-a.txt`) 用の Basic 認証ユーザー名です。 |
 | `VRT_BASIC_AUTH_PASSWORD_A` | 空 | A 側 (`tests/urls-a.txt`) 用の Basic 認証パスワードです。 |
 | `VRT_BASIC_AUTH_USERNAME_B` | 空 | B 側 (`tests/urls-b.txt`) 用の Basic 認証ユーザー名です。 |
 | `VRT_BASIC_AUTH_PASSWORD_B` | 空 | B 側 (`tests/urls-b.txt`) 用の Basic 認証パスワードです。 |
 | `VRT_BASIC_AUTH_USERNAME` | 空 | A/B 個別設定がない場合の共通 Basic 認証ユーザー名です。 |
 | `VRT_BASIC_AUTH_PASSWORD` | 空 | A/B 個別設定がない場合の共通 Basic 認証パスワードです。 |
+
+## VRT_MASK_SELECTORS の運用方針
+
+- `.env` では 1 変数を 1 行で書く運用を推奨します。
+- `VRT_MASK_SELECTORS` は改行しても動作します（ダブルクォートで囲んでください）。
+- マスク対象は A/B 両方のスクリーンショットに同じ設定が適用されます。
+
+推奨例（複数行・ダブルクォート）:
+
+```env
+VRT_MASK_SELECTORS="
+.event-live-venue-map iframe,
+.video-wrapper iframe,
+.movie-content-movie-container iframe,
+.case-image-wrapper iframe,
+iframe.video,
+.video-container video.video
+"
+```
+
+推奨例（JSON 配列形式）:
+
+```env
+VRT_MASK_SELECTORS=[".event-live-venue-map iframe",".video-wrapper iframe",".movie-content-movie-container iframe",".case-image-wrapper iframe","iframe.video",".video-container video.video"]
+```
+
+推奨例（カンマ区切り形式）:
+
+```env
+VRT_MASK_SELECTORS=.event-live-venue-map iframe,.video-wrapper iframe,.movie-content-movie-container iframe,.case-image-wrapper iframe,iframe.video,.video-container video.video
+```
 
 ## Basic 認証の優先順位
 

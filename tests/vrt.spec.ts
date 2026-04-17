@@ -13,13 +13,22 @@ const MAX_DIFF_RATIO = Number(process.env.VRT_MAX_DIFF_RATIO ?? 0.01);
 const MAX_DIFF_PIXELS = Number(process.env.VRT_MAX_DIFF_PIXELS ?? 0);
 // A/Bの生画像を tests/vrt-snapshots に保存するか（既定: 保存する）
 const SAVE_RAW_SCREENSHOTS = parseBooleanEnv(process.env.VRT_SAVE_RAW_SCREENSHOTS, true);
+// マスク対象セレクター（.env の VRT_MASK_SELECTORS で上書き可能）
+const MASK_SELECTORS = parseMaskSelectorsEnv(process.env.VRT_MASK_SELECTORS, [
+  '.event-live-venue-map iframe',
+  '.video-wrapper iframe',
+  '.movie-content-movie-container iframe',
+  '.case-image-wrapper iframe',
+  'iframe.video',
+  '.video-container video.video',
+]);
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
   if (value == null) return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   // 引用符付きの環境変数値でも認証値として使えるようにする
-  return trimmed.replace(/^['\"](.*)['\"]$/, '$1');
+  return trimmed.replace(/^(['\"])([\s\S]*)\1$/, '$2');
 }
 
 function pickFirstEnv(keys: string[]): string | undefined {
@@ -48,6 +57,40 @@ function parseBooleanEnv(value: string | undefined, defaultValue: boolean): bool
     default:
       return defaultValue;
   }
+}
+
+function parseMaskSelectorsEnv(value: string | undefined, defaultValue: string[]): string[] {
+  const normalized = normalizeEnvValue(value);
+  if (!normalized) return defaultValue;
+
+  const expanded = normalized.replace(/\\n/g, '\n');
+
+  // JSON 配列形式: [".a", ".b"]
+  if (expanded.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(expanded);
+      if (Array.isArray(parsed)) {
+        const selectors = parsed
+          .map((item) => (typeof item === 'string' ? item.trim() : ''))
+          .filter(Boolean);
+        if (selectors.length > 0) return selectors;
+      }
+    } catch {
+      // JSON として解釈できない場合は区切り文字形式として扱う
+    }
+  }
+
+  // 区切り文字形式: "," または改行
+  const selectors = expanded
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return selectors.length > 0 ? selectors : defaultValue;
+}
+
+function createMaskLocators(page: Page) {
+  return MASK_SELECTORS.map((selector) => page.locator(selector));
 }
 
 function getContextOptions(side: 'A' | 'B'): BrowserContextOptions {
@@ -97,6 +140,23 @@ async function stabilizePage(page: Page): Promise<void> {
   });
 }
 
+async function scrollToBottom(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => {
+      let lastHeight = 0;
+      const timer = setInterval(() => {
+        window.scrollBy(0, window.innerHeight);
+        if (document.body.scrollHeight === lastHeight) {
+          clearInterval(timer);
+          window.scrollTo(0, 0);
+          resolve();
+        }
+        lastHeight = document.body.scrollHeight;
+      }, 200);
+    });
+  });
+}
+
 for (const pagePair of pages) {
   test(`VRT: ${pagePair.name}`, async ({ browser }, testInfo) => {
     if (SAVE_RAW_SCREENSHOTS) {
@@ -113,8 +173,12 @@ for (const pagePair of pages) {
       // --- A: スクリーンショット取得 ---
       await waitBetweenPages(pageA);
       await pageA.goto(urlA, { waitUntil: 'networkidle' });
+      await scrollToBottom(pageA);
       await stabilizePage(pageA);
-      const screenshotA = await pageA.screenshot({ fullPage: true });
+      const screenshotA = await pageA.screenshot({
+        fullPage: true,
+        mask: createMaskLocators(pageA),
+      });
       if (SAVE_RAW_SCREENSHOTS) {
         fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}-A.png`), screenshotA);
       }
@@ -122,8 +186,12 @@ for (const pagePair of pages) {
       // --- B: スクリーンショット取得 ---
       await waitBetweenPages(pageB);
       await pageB.goto(urlB, { waitUntil: 'networkidle' });
+      await scrollToBottom(pageB);
       await stabilizePage(pageB);
-      const screenshotB = await pageB.screenshot({ fullPage: true });
+      const screenshotB = await pageB.screenshot({
+        fullPage: true,
+        mask: createMaskLocators(pageB),
+      });
       if (SAVE_RAW_SCREENSHOTS) {
         fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}-B.png`), screenshotB);
       }
