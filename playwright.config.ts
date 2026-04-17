@@ -2,10 +2,6 @@ import { defineConfig, devices } from '@playwright/test';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
-/**
- * Read environment variables from file.
- * https://github.com/motdotla/dotenv
- */
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 /**
@@ -18,11 +14,11 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   reporter: 'html',
-  // toHaveScreenshot のスナップショット保存先
+  // toMatchSnapshot / toHaveScreenshot のスナップショット保存先
   snapshotDir: './tests/vrt-baselines',
   use: {
     trace: 'on-first-retry',
-    // スクリーンショット比較の閾値設定
+    // 失敗時にスクリーンショットを保存
     screenshot: 'only-on-failure',
   },
 

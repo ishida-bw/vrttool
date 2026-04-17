@@ -1,10 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import pixelmatch from 'pixelmatch';
-import { test, type BrowserContextOptions, type Page } from '@playwright/test';
+import { expect, test, type BrowserContextOptions, type Page } from '@playwright/test';
 import { pages } from './urls';
-
-const { PNG } = require('pngjs');
 
 // スクリーンショット保存先
 const SNAPSHOT_DIR = path.join(__dirname, 'vrt-snapshots');
@@ -14,12 +11,14 @@ const WAIT_MS = Number(process.env.VRT_WAIT_MS ?? 2000);
 const MAX_DIFF_RATIO = Number(process.env.VRT_MAX_DIFF_RATIO ?? 0.01);
 // 許容差分ピクセル数（0 = 1pxでも差分があれば失敗）
 const MAX_DIFF_PIXELS = Number(process.env.VRT_MAX_DIFF_PIXELS ?? 0);
+// A/Bの生画像を tests/vrt-snapshots に保存するか（既定: 保存する）
+const SAVE_RAW_SCREENSHOTS = parseBooleanEnv(process.env.VRT_SAVE_RAW_SCREENSHOTS, true);
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
   if (value == null) return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  // .env 側で引用符付きでも認証値として使えるようにする
+  // 引用符付きの環境変数値でも認証値として使えるようにする
   return trimmed.replace(/^['\"](.*)['\"]$/, '$1');
 }
 
@@ -29,6 +28,26 @@ function pickFirstEnv(keys: string[]): string | undefined {
     if (value) return value;
   }
   return undefined;
+}
+
+function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+  const normalized = normalizeEnvValue(value);
+  if (!normalized) return defaultValue;
+
+  switch (normalized.toLowerCase()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    case '0':
+    case 'false':
+    case 'no':
+    case 'off':
+      return false;
+    default:
+      return defaultValue;
+  }
 }
 
 function getContextOptions(side: 'A' | 'B'): BrowserContextOptions {
@@ -78,46 +97,11 @@ async function stabilizePage(page: Page): Promise<void> {
   });
 }
 
-/**
- * 2つの PNG Buffer を直接比較し、差分ピクセル数・差分画像を返す。
- * サイズが異なる場合は大きい方に合わせてキャンバスを拡張する。
- */
-function comparePngs(
-  bufA: Buffer,
-  bufB: Buffer,
-): { diffPixels: number; totalPixels: number; diffBuffer: Buffer } {
-  const imgA = PNG.sync.read(bufA);
-  const imgB = PNG.sync.read(bufB);
-
-  const width = Math.max(imgA.width, imgB.width);
-  const height = Math.max(imgA.height, imgB.height);
-
-  // キャンバスサイズを統一（足りない部分は透明で埋める）
-  const padded = (img: { width: number; height: number; data: Buffer }): Buffer => {
-    if (img.width === width && img.height === height) return img.data;
-    const buf = Buffer.alloc(width * height * 4, 0);
-    for (let y = 0; y < img.height; y++) {
-      img.data.copy(buf, y * width * 4, y * img.width * 4, (y + 1) * img.width * 4);
-    }
-    return buf;
-  };
-
-  const diffPng = new PNG({ width, height });
-  const diffPixels = pixelmatch(padded(imgA), padded(imgB), diffPng.data, width, height, {
-    threshold: 0,
-    includeAA: true,
-  });
-
-  return {
-    diffPixels,
-    totalPixels: width * height,
-    diffBuffer: PNG.sync.write(diffPng),
-  };
-}
-
 for (const pagePair of pages) {
   test(`VRT: ${pagePair.name}`, async ({ browser }, testInfo) => {
-    fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+    if (SAVE_RAW_SCREENSHOTS) {
+      fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+    }
 
     const { urlA, urlB, name } = pagePair;
     const contextA = await browser.newContext(getContextOptions('A'));
@@ -131,34 +115,34 @@ for (const pagePair of pages) {
       await pageA.goto(urlA, { waitUntil: 'networkidle' });
       await stabilizePage(pageA);
       const screenshotA = await pageA.screenshot({ fullPage: true });
-      fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}-A.png`), screenshotA);
+      if (SAVE_RAW_SCREENSHOTS) {
+        fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}-A.png`), screenshotA);
+      }
 
       // --- B: スクリーンショット取得 ---
       await waitBetweenPages(pageB);
       await pageB.goto(urlB, { waitUntil: 'networkidle' });
       await stabilizePage(pageB);
       const screenshotB = await pageB.screenshot({ fullPage: true });
-      fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}-B.png`), screenshotB);
+      if (SAVE_RAW_SCREENSHOTS) {
+        fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}-B.png`), screenshotB);
+      }
 
-      // --- A vs B 直接比較 ---
-      const { diffPixels, totalPixels, diffBuffer } = comparePngs(screenshotA, screenshotB);
-      const diffRatio = diffPixels / totalPixels;
-      console.log(`[VRT: ${name}] diffPixels=${diffPixels}, totalPixels=${totalPixels}, diffRatio=${(diffRatio * 100).toFixed(4)}%`);
-      fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}-diff.png`), diffBuffer);
-
-      // レポートに3枚添付
+      // レポートに2枚添付
       await testInfo.attach(`A: ${urlA}`, { body: screenshotA, contentType: 'image/png' });
       await testInfo.attach(`B: ${urlB}`, { body: screenshotB, contentType: 'image/png' });
-      await testInfo.attach(`DIFF (${(diffRatio * 100).toFixed(2)}%)`, { body: diffBuffer, contentType: 'image/png' });
 
-      // 差分率または差分ピクセル数が閾値を超えたらテスト失敗
-      if (diffRatio > MAX_DIFF_RATIO || diffPixels > MAX_DIFF_PIXELS) {
-        throw new Error(
-          `差分が許容値を超えています:\n` +
-          `- 比率: ${(diffRatio * 100).toFixed(4)}% (許容 ${(MAX_DIFF_RATIO * 100).toFixed(4)}%)\n` +
-          `- ピクセル: ${diffPixels} (許容 ${MAX_DIFF_PIXELS}) / 総ピクセル ${totalPixels}`,
-        );
-      }
+      // A を expected、B を actual として Playwright の組み込み比較を使う。
+      // これにより HTML レポートで image mismatch が表示される。
+      const snapshotName = `${name}-A-vs-B.png`;
+      const expectedPath = testInfo.snapshotPath(snapshotName);
+      fs.mkdirSync(path.dirname(expectedPath), { recursive: true });
+      fs.writeFileSync(expectedPath, screenshotA);
+
+      await expect(screenshotB).toMatchSnapshot(snapshotName, {
+        maxDiffPixelRatio: MAX_DIFF_RATIO,
+        maxDiffPixels: MAX_DIFF_PIXELS,
+      });
 
       await waitBetweenPages(pageB);
     } finally {
