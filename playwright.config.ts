@@ -13,7 +13,11 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 1,
-  reporter: 'html',
+  reporter: [
+    ['html', { outputFolder: 'playwright-report', open: 'never' }],
+    ['json', { outputFile: 'playwright-report/results.json' }],
+    ['junit', { outputFile: 'playwright-report/results.xml' }],
+  ],
   // toMatchSnapshot / toHaveScreenshot のスナップショット保存先
   snapshotDir: './tests/vrt-baselines',
   use: {

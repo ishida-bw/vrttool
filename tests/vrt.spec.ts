@@ -14,7 +14,7 @@ const MAX_DIFF_PIXELS = Number(process.env.VRT_MAX_DIFF_PIXELS ?? 0);
 // A/Bの生画像を tests/vrt-snapshots に保存するか（既定: 保存する）
 const SAVE_RAW_SCREENSHOTS = parseBooleanEnv(process.env.VRT_SAVE_RAW_SCREENSHOTS, true);
 // マスク対象セレクター（.env の VRT_MASK_SELECTORS で上書き可能）
-const MASK_SELECTORS = parseMaskSelectorsEnv(process.env.VRT_MASK_SELECTORS, [
+const MASK_SELECTORS = parseSelectorsEnv(process.env.VRT_MASK_SELECTORS, [
   '.event-live-venue-map iframe',
   '.video-wrapper iframe',
   '.movie-content-movie-container iframe',
@@ -22,6 +22,14 @@ const MASK_SELECTORS = parseMaskSelectorsEnv(process.env.VRT_MASK_SELECTORS, [
   'iframe.video',
   '.video-container video.video',
 ]);
+// 位置ずれを比較対象外にするセレクター（.env の VRT_IGNORE_POSITION_SELECTORS で指定可能）
+const IGNORE_POSITION_SELECTORS = parseSelectorsEnv(process.env.VRT_IGNORE_POSITION_SELECTORS, []);
+// スクリーンショット前に「消えるまで待つ」一時要素セレクター
+const WAIT_HIDDEN_SELECTORS = parseSelectorsEnv(process.env.VRT_WAIT_HIDDEN_SELECTORS, ['#__bs_notify__']);
+// 一時要素の待機タイムアウト（ミリ秒）
+const WAIT_HIDDEN_TIMEOUT_MS = Number(process.env.VRT_WAIT_HIDDEN_TIMEOUT_MS ?? 5000);
+// デバッグモード（座標取得状況をコンソール出力）
+const DEBUG = parseBooleanEnv(process.env.VRT_DEBUG, false);
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
   if (value == null) return undefined;
@@ -59,7 +67,7 @@ function parseBooleanEnv(value: string | undefined, defaultValue: boolean): bool
   }
 }
 
-function parseMaskSelectorsEnv(value: string | undefined, defaultValue: string[]): string[] {
+function parseSelectorsEnv(value: string | undefined, defaultValue: string[]): string[] {
   const normalized = normalizeEnvValue(value);
   if (!normalized) return defaultValue;
 
@@ -89,8 +97,45 @@ function parseMaskSelectorsEnv(value: string | undefined, defaultValue: string[]
   return selectors.length > 0 ? selectors : defaultValue;
 }
 
+function createLocators(page: Page, selectors: string[]) {
+  return selectors.map((selector) => page.locator(selector));
+}
+
 function createMaskLocators(page: Page) {
-  return MASK_SELECTORS.map((selector) => page.locator(selector));
+  return createLocators(page, MASK_SELECTORS);
+}
+
+async function hideIgnoredElements(page: Page): Promise<void> {
+  if (IGNORE_POSITION_SELECTORS.length === 0) return;
+  await page.evaluate((selectors) => {
+    for (const selector of selectors) {
+      document.querySelectorAll<HTMLElement>(selector).forEach((el) => {
+        el.style.setProperty('display', 'none', 'important');
+      });
+    }
+  }, IGNORE_POSITION_SELECTORS);
+}
+
+async function waitForHiddenTransientElements(page: Page): Promise<void> {
+  for (const selector of WAIT_HIDDEN_SELECTORS) {
+    const locator = page.locator(selector).first();
+    try {
+      await locator.waitFor({ state: 'hidden', timeout: WAIT_HIDDEN_TIMEOUT_MS });
+      if (DEBUG) {
+        console.log(`[DEBUG] transient element hidden: ${selector}`);
+      }
+    } catch {
+      // 時間内に消えない場合は強制非表示にして差分を避ける
+      await page.evaluate((targetSelector) => {
+        document.querySelectorAll<HTMLElement>(targetSelector).forEach((el) => {
+          el.style.setProperty('display', 'none', 'important');
+        });
+      }, selector);
+      if (DEBUG) {
+        console.log(`[DEBUG] transient element force-hidden: ${selector}`);
+      }
+    }
+  }
 }
 
 function getContextOptions(side: 'A' | 'B'): BrowserContextOptions {
@@ -175,6 +220,8 @@ for (const pagePair of pages) {
       await pageA.goto(urlA, { waitUntil: 'networkidle' });
       await scrollToBottom(pageA);
       await stabilizePage(pageA);
+      await waitForHiddenTransientElements(pageA);
+      await hideIgnoredElements(pageA);
       const screenshotA = await pageA.screenshot({
         fullPage: true,
         mask: createMaskLocators(pageA),
@@ -188,6 +235,8 @@ for (const pagePair of pages) {
       await pageB.goto(urlB, { waitUntil: 'networkidle' });
       await scrollToBottom(pageB);
       await stabilizePage(pageB);
+      await waitForHiddenTransientElements(pageB);
+      await hideIgnoredElements(pageB);
       const screenshotB = await pageB.screenshot({
         fullPage: true,
         mask: createMaskLocators(pageB),
